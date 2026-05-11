@@ -10,6 +10,48 @@
   <style>
     body { font-family: 'Prompt', sans-serif; background-color: #f3f4f6; }
     button { touch-action: manipulation; }
+
+    /* Navigation button */
+    .nav-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      padding: 9px 16px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      text-decoration: none;
+      width: 100%;
+      justify-content: center;
+    }
+    .nav-btn-google {
+      background: linear-gradient(135deg, #1a73e8 0%, #0d5cbf 100%);
+      color: #fff;
+    }
+    .nav-btn-google:hover {
+      background: linear-gradient(135deg, #1765cc 0%, #0a4fa3 100%);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(26,115,232,0.4);
+    }
+    .nav-btn-google:active {
+      transform: scale(0.97);
+    }
+    .nav-btn-loading {
+      background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+      color: #fff;
+      pointer-events: none;
+      animation: pulse 1.2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    .nav-btn svg { flex-shrink: 0; }
   </style>
 </head>
 <body class="min-h-screen flex flex-col items-center py-6 px-3 md:py-10 md:px-4 bg-gray-100">
@@ -175,12 +217,27 @@
         sideBar.className = 'absolute left-0 top-0 bottom-0 w-1.5 bg-blue-500';
         div.appendChild(sideBar);
 
-        let mapBtn = '';
-        if(item.mapUrl) {
-           mapBtn = `<a href="${item.mapUrl}" target="_blank" class="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-100 flex items-center gap-1 w-fit mt-2 hover:bg-blue-100">
-             📍 แผนที่
-           </a>`;
+        // Build navigation button
+        const destParam = encodeURIComponent(item.location);
+        const hasMapUrl   = item.mapUrl && item.mapUrl.trim() !== '';
+        // Extract lat,lng from Google Maps URL if present
+        let destCoords = '';
+        if (hasMapUrl) {
+          const coordMatch = item.mapUrl.match(/@(-?[\d.]+),(-?[\d.]+)/);
+          if (coordMatch) destCoords = `${coordMatch[1]},${coordMatch[2]}`;
         }
+        const navId = `navBtn_${Math.random().toString(36).substr(2,8)}`;
+        const mapBtn = `
+          <button
+            id="${navId}"
+            class="nav-btn nav-btn-google"
+            onclick="openNavigation(this, '${destCoords}', '${destParam}', '${hasMapUrl ? item.mapUrl.replace(/'/g,"&#39;") : ''}')">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+            </svg>
+            นำทางไปสถานที่
+          </button>`;
 
         div.innerHTML += `
           <div class="pl-3">
@@ -214,6 +271,64 @@
       msg.className = `p-4 rounded-lg text-center text-sm ${classes}`;
       msg.innerHTML = text;
       msg.classList.remove('hidden');
+    }
+
+    /**
+     * openNavigation(btn, destCoords, destAddress, originalMapUrl)
+     * Tries to get the user's current GPS location, then opens Google Maps
+     * directions from current location to the venue.
+     *
+     * Priority:
+     *  1. If destCoords (lat,lng) available  → use &destination=lat,lng
+     *  2. Else use &destination=encodedAddress
+     *  3. If geolocation denied/unavailable  → open venue-only Maps URL
+     */
+    function openNavigation(btn, destCoords, destAddress, originalMapUrl) {
+      const originalHTML = btn.innerHTML;
+      btn.className = 'nav-btn nav-btn-loading';
+      btn.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 2a10 10 0 100 20A10 10 0 0012 2z" />
+        </svg>
+        กำลังระบุตำแหน่ง...`;
+
+      function buildUrl(originLat, originLng) {
+        const dest = destCoords ? destCoords : destAddress;
+        // Google Maps directions URL
+        if (originLat !== null) {
+          return `https://www.google.com/maps/dir/${originLat},${originLng}/${dest}`;
+        } else {
+          // No origin → open destination only (fallback to original map URL or search)
+          if (originalMapUrl) return originalMapUrl;
+          return `https://www.google.com/maps/search/?api=1&query=${destAddress}`;
+        }
+      }
+
+      function openFinal(lat, lng) {
+        const url = buildUrl(lat, lng);
+        btn.className = 'nav-btn nav-btn-google';
+        btn.innerHTML = originalHTML;
+        window.open(url, '_blank');
+      }
+
+      if (!navigator.geolocation) {
+        // Browser doesn't support geolocation
+        openFinal(null, null);
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          openFinal(pos.coords.latitude, pos.coords.longitude);
+        },
+        (err) => {
+          // Permission denied or error → open without origin
+          console.warn('Geolocation error:', err.message);
+          openFinal(null, null);
+        },
+        { timeout: 10000, maximumAge: 60000, enableHighAccuracy: true }
+      );
     }
   </script>
 </body>
